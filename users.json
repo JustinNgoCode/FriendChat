@@ -1,0 +1,47 @@
+{
+  "charlie": {
+    "password": "$2a$10$YEy1J.CNcVyCWRdz0qDzKuH/o4pdm0Y7hABb/iV5eZKaghaQdBeL6",
+    "lastMessageTime": 1742796134301,
+    "messageCount": 0
+  },
+  "Charlie": {
+    "password": "$2a$10$K.q/QdcGIWmXX94ggRCfsO64wedYUmkUpOgZlUUfSnOfnifVYz3oO",
+    "lastMessageTime": 1742796188608,
+    "messageCount": 0
+  },
+  "Abe": {
+    "password": "$2a$10$Qu4/f6SDhd.cZzCzboXDzuNggZk8/88vHSW3.JzdhyUXW8CGOkgfi",
+    "lastMessageTime": 1742796246791,
+    "messageCount": 1
+  },
+  "Bill": {
+    "password": "$2a$10$apyT9WlG3XS7mo1paj5HF.FFsxtBvEefhAJeIKub.oHf9Dp007Koy",
+    "lastMessageTime": 1742796260116,
+    "messageCount": 1
+  },
+  "Donald": {
+    "password": "$2a$10$Kt.lqQSJ.cACq.mnC28YbObGqn1pNRenovoB7YMddHmWFpVomfRaa",
+    "lastMessageTime": 1742796273562,
+    "messageCount": 0
+  },
+  "abe": {
+    "password": "$2a$10$8osiBJukPJT7POQV.WLQAuFrjZGouCh1mXzY4PZ2uLzzEssF9C3ZO",
+    "lastMessageTime": 1742799857740,
+    "messageCount": 0
+  },
+  "a": {
+    "password": "$2a$10$zQJtyo0QD.d9LduZG2HgTOXlWM6iBMys9GpJg9KTyfr40MpEa81Ee",
+    "lastMessageTime": 1742805696519,
+    "messageCount": 3
+  },
+  "b": {
+    "password": "$2a$10$94Mf6c7P91kCPI7/sRbUs.cgvIqoBuTJgjsM7JOppSKb0RU09n0Se",
+    "lastMessageTime": 1742805817747,
+    "messageCount": 2
+  },
+  "d": {
+    "password": "$2a$10$W9tT7nB9xXyM1.0IyCyjseXbEq3kaGCUTzYpmfFx1RdUkT.haNtZq",
+    "lastMessageTime": 1742805819747,
+    "messageCount": 0
+  }
+}

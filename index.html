@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureChat</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background-color: #fff;
+        }
+        h2 {
+            color: #000;
+        }
+        #auth, #chat {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #fff;
+        }
+        #chat, #users-container {
+            display: none;
+        }
+        #messages {
+            border: 1px solid #000;
+            height: 300px;
+            overflow-y: scroll;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #fff;
+        }
+        input, button {
+            margin: 5px;
+            padding: 5px;
+            border: 1px solid #000;
+        }
+        button {
+            background-color: #ccc;
+            color: #000;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #bbb;
+        }
+        .container {
+            display: flex;
+        }
+        .sidebar {
+            width: 200px;
+            border-right: 1px solid #000;
+            padding: 10px;
+            background-color: #fff;
+            height: 100vh;
+        }
+        .main {
+            flex: 1;
+            padding: 10px;
+        }
+        ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        li {
+            padding: 5px 0;
+            color: #000;
+            cursor: pointer;
+        }
+        li:hover {
+            background-color: #ddd;
+        }
+        li.active {
+            background-color: #bbb;
+        }
+        #auth-error {
+            margin-top: 10px;
+            color: red;
+        }
+        #emoji-picker {
+            display: none;
+            position: absolute;
+            background-color: #fff;
+            border: 1px solid #000;
+            padding: 5px;
+            z-index: 1000;
+        }
+        #emoji-picker button {
+            background: none;
+            border: none;
+            padding: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #emoji-picker button:hover {
+            background-color: #ddd;
+        }
+        .message {
+            margin: 5px 0;
+        }
+        .message b {
+            font-weight: bold;
+        }
+        .message i {
+            font-style: italic;
+        }
+        .message a {
+            color: blue;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="auth">
+        <h2>SecureChat</h2>
+        <div>
+            <h3>Register</h3>
+            <input type="text" id="reg-username" placeholder="Username">
+            <input type="password" id="reg-password" placeholder="Password">
+            <button onclick="register()">Register</button>
+        </div>
+        <div>
+            <h3>Login</h3>
+            <input type="text" id="login-username" placeholder="Username">
+            <input type="password" id="login-password" placeholder="Password">
+            <button onclick="login()">Login</button>
+        </div>
+        <p id="auth-error"></p>
+    </div>
+
+    <div class="container">
+        <div id="users-container" class="sidebar">
+            <h3>Users</h3>
+            <ul id="users-list"></ul>
+        </div>
+        <div class="main">
+            <div id="chat">
+                <h2>Chat - <span id="active-user">Select a user to start chatting</span></h2>
+                <div id="messages"></div>
+                <input type="text" id="message-input" placeholder="Type a message... (e.g., **bold**, *italic*, [link](url))">
+                <button onclick="sendMessage()">Send</button>
+                <button onclick="toggleEmojiPicker()">😊</button>
+                <div id="emoji-picker">
+                    <button onclick="insertEmoji('😊')">😊</button>
+                    <button onclick="insertEmoji('😂')">😂</button>
+                    <button onclick="insertEmoji('❤️')">❤️</button>
+                    <button onclick="insertEmoji('👍')">👍</button>
+                    <button onclick="insertEmoji('😢')">😢</button>
+                    <button onclick="insertEmoji('😡')">😡</button>
+                    <button onclick="insertEmoji('🎉')">🎉</button>
+                    <button onclick="insertEmoji('🌟')">🌟</button>
+                </div>
+                <input type="file" id="file-input">
+                <button onclick="sendFile()">Send File</button>
+                <button onclick="logout()">Logout</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let username;
+        let token;
+        let publicKeys = {};
+        let privateKey;
+        let publicKey;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        const reconnectInterval = 3000;
+        let activeChat = null;
+        const chatHistories = new Map();
+
+        async function generateKeyPair() {
+            const keyPair = await window.crypto.subtle.generateKey(
+                {
+                    name: 'RSA-OAEP',
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+                    hash: 'SHA-256'
+                },
+                true,
+                ['encrypt', 'decrypt']
+            );
+            privateKey = keyPair.privateKey;
+            publicKey = await window.crypto.subtle.exportKey('spki', keyPair.publicKey);
+            return arrayBufferToPem(publicKey, 'PUBLIC KEY');
+        }
+
+        function arrayBufferToPem(buffer, type) {
+            const binary = String.fromCharCode(...new Uint8Array(buffer));
+            const base64 = btoa(binary);
+            return `-----BEGIN ${type}-----\n${base64.match(/.{1,64}/g).join('\n')}\n-----END ${type}-----`;
+        }
+
+        function pemToArrayBuffer(pem) {
+            const pemHeader = '-----BEGIN PUBLIC KEY-----';
+            const pemFooter = '-----END PUBLIC KEY-----';
+            const pemContents = pem.replace(pemHeader, '').replace(pemFooter, '').replace(/\n/g, '');
+            const binaryDerString = atob(pemContents);
+            const binaryDer = new Uint8Array(binaryDerString.length);
+            for (let i = 0; i < binaryDerString.length; i++) {
+                binaryDer[i] = binaryDerString.charCodeAt(i);
+            }
+            return binaryDer.buffer;
+        }
+
+        async function register() {
+            const username = document.getElementById('reg-username').value;
+            const password = document.getElementById('reg-password').value;
+            const errorElement = document.getElementById('auth-error');
+
+            try {
+                const response = await fetch('http://localhost:3000/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                errorElement.textContent = response.ok ? 'Registration successful! Please log in.' : (data.error || 'Registration failed.');
+            } catch (err) {
+                console.error('Register error:', err);
+                errorElement.textContent = 'Error connecting to server.';
+            }
+        }
+
+        async function login() {
+            username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            const errorElement = document.getElementById('auth-error');
+
+            try {
+                const response = await fetch('http://localhost:3000/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    token = data.token;
+                    const userPublicKey = await generateKeyPair();
+                    connectWebSocket(token, userPublicKey);
+                } else {
+                    errorElement.textContent = data.error || 'Login failed.';
+                }
+            } catch (err) {
+                console.error('Login error:', err);
+                errorElement.textContent = 'Error connecting to server.';
+            }
+        }
+
+        function connectWebSocket(token, userPublicKey) {
+            console.log('Connecting to WebSocket with token:', token);
+            ws = new WebSocket(`ws://localhost:3000?token=${token}`);
+
+            ws.onopen = () => {
+                console.log('Connected to WebSocket server');
+                reconnectAttempts = 0;
+                document.getElementById('auth').style.display = 'none';
+                document.getElementById('chat').style.display = 'block';
+                document.getElementById('users-container').style.display = 'block';
+                ws.send(JSON.stringify({ type: 'publicKey', publicKey: userPublicKey }));
+            };
+
+            ws.onmessage = async (event) => {
+                console.log('Received message:', event.data);
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.message && !data.user) {
+                        appendMessage(data.message, activeChat);
+                    } else if (data.type === 'publicKeys') {
+                        publicKeys = data.publicKeys;
+                        console.log('Received public keys:', publicKeys);
+                    } else if (data.user) {
+                        if (data.type === 'file') {
+                            // Decrypt the file and create a download link
+                            const decryptedFileData = await decryptFile(data.data, data.key, data.iv);
+                            const blob = new Blob([decryptedFileData], { type: 'application/octet-stream' });
+                            const url = URL.createObjectURL(blob);
+                            const message = `${data.user} sent a file: <a href="${url}" download="${data.filename}">${data.filename}</a>`;
+                            appendMessage(message, data.user);
+                        } else {
+                            const decryptedMessage = await decryptMessage(data.message);
+                            appendMessage(`${data.user}: ${decryptedMessage}`, data.user);
+                        }
+                    } else if (data.type === 'users') {
+                        updateUsersList(data.users);
+                    }
+                } catch (err) {
+                    console.error('Error parsing received message:', err);
+                }
+            };
+
+            ws.onclose = (event) => {
+                console.log('Disconnected:', event.code, event.reason);
+                document.getElementById('auth').style.display = 'block';
+                document.getElementById('chat').style.display = 'none';
+                document.getElementById('users-container').style.display = 'none';
+                document.getElementById('auth-error').textContent = 'Disconnected: ' + event.reason;
+
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    console.log(`Attempting to reconnect (${reconnectAttempts + 1}/${maxReconnectAttempts})...`);
+                    setTimeout(() => {
+                        reconnectAttempts++;
+                        connectWebSocket(token, userPublicKey);
+                    }, reconnectInterval);
+                } else {
+                    console.error('Max reconnect attempts reached. Please log in again.');
+                    document.getElementById('auth-error').textContent = 'Connection lost. Please log in again.';
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function logout() {
+            if (ws) ws.close();
+            document.getElementById('auth').style.display = 'block';
+            document.getElementById('chat').style.display = 'none';
+            document.getElementById('users-container').style.display = 'none';
+            document.getElementById('auth-error').textContent = 'Logged out successfully.';
+            document.getElementById('login-username').value = '';
+            document.getElementById('login-password').value = '';
+            activeChat = null;
+            chatHistories.clear();
+            document.getElementById('active-user').textContent = 'Select a user to start chatting';
+        }
+
+        function appendMessage(message, sender) {
+            if (!chatHistories.has(sender)) {
+                chatHistories.set(sender, []);
+            }
+            chatHistories.get(sender).push(message);
+            if (sender === activeChat) {
+                const messagesDiv = document.getElementById('messages');
+                const messageElement = document.createElement('div');
+                messageElement.className = 'message';
+                messageElement.innerHTML = formatMessage(message);
+                messagesDiv.appendChild(messageElement);
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+
+        function formatMessage(message) {
+            return message
+                .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+                .replace(/\*(.*?)\*/g, '<i>$1</i>')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+        }
+
+        function updateUsersList(users) {
+            const usersList = document.getElementById('users-list');
+            usersList.innerHTML = '';
+            users.forEach(user => {
+                if (user === username) return;
+                const li = document.createElement('li');
+                li.textContent = user;
+                li.onclick = () => selectChat(user);
+                if (user === activeChat) li.classList.add('active');
+                usersList.appendChild(li);
+            });
+        }
+
+        function selectChat(user) {
+            activeChat = user;
+            document.getElementById('active-user').textContent = user;
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = '';
+            if (chatHistories.has(user)) {
+                chatHistories.get(user).forEach(message => {
+                    const messageElement = document.createElement('div');
+                    messageElement.className = 'message';
+                    messageElement.innerHTML = formatMessage(message);
+                    messagesDiv.appendChild(messageElement);
+                });
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+            const usersList = document.getElementById('users-list');
+            Array.from(usersList.children).forEach(li => {
+                li.classList.toggle('active', li.textContent === user);
+            });
+        }
+
+        async function sendMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                appendMessage('Error: Not connected to the server. Please try logging in again.', activeChat);
+                return;
+            }
+
+            if (!activeChat) {
+                appendMessage('Error: Please select a user to chat with.', activeChat);
+                return;
+            }
+
+            const messageInput = document.getElementById('message-input');
+            const message = messageInput.value;
+            if (!message) return;
+
+            try {
+                const encryptedMessage = await encryptMessage(message, activeChat);
+                ws.send(JSON.stringify({ type: 'message', recipient: activeChat, message: encryptedMessage }));
+                appendMessage(`You: ${message}`, activeChat);
+                messageInput.value = '';
+            } catch (err) {
+                console.error('Encryption error:', err);
+                appendMessage(`Error: Failed to encrypt message - ${err.message}`, activeChat);
+            }
+        }
+
+        async function sendFile() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                appendMessage('Error: Not connected to the server. Please try logging in again.', activeChat);
+                return;
+            }
+
+            if (!activeChat) {
+                appendMessage('Error: Please select a user to chat with.', activeChat);
+                return;
+            }
+
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const fileData = reader.result.split(',')[1];
+                const symmetricKey = crypto.getRandomValues(new Uint8Array(32));
+                const iv = crypto.getRandomValues(new Uint8Array(16));
+
+                try {
+                    const encryptedFile = await encryptFile(fileData, symmetricKey, iv);
+                    const encryptedKey = await encryptSymmetricKey(symmetricKey, activeChat);
+                    ws.send(JSON.stringify({
+                        type: 'file',
+                        recipient: activeChat,
+                        filename: file.name,
+                        data: encryptedFile,
+                        key: encryptedKey,
+                        iv: btoa(String.fromCharCode(...iv))
+                    }));
+                    appendMessage(`You sent a file: ${file.name}`, activeChat);
+                    fileInput.value = '';
+                } catch (err) {
+                    console.error('File encryption error:', err);
+                    appendMessage(`Error: Failed to encrypt file - ${err.message}`, activeChat);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function encryptMessage(message, recipient) {
+            const recipientPublicKey = publicKeys[recipient];
+            if (!recipientPublicKey) throw new Error(`Public key for ${recipient} not found`);
+
+            const aesKey = await crypto.subtle.generateKey(
+                { name: 'AES-GCM', length: 256 },
+                true,
+                ['encrypt', 'decrypt']
+            );
+
+            const encoder = new TextEncoder();
+            const data = encoder.encode(message);
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv },
+                aesKey,
+                data
+            );
+
+            const exportedAesKey = await crypto.subtle.exportKey('raw', aesKey);
+            const key = await crypto.subtle.importKey(
+                'spki',
+                pemToArrayBuffer(recipientPublicKey),
+                { name: 'RSA-OAEP', hash: 'SHA-256' },
+                false,
+                ['encrypt']
+            );
+            const encryptedAesKey = await crypto.subtle.encrypt(
+                { name: 'RSA-OAEP' },
+                key,
+                exportedAesKey
+            );
+
+            return {
+                encryptedMessage: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+                encryptedKey: btoa(String.fromCharCode(...new Uint8Array(encryptedAesKey))),
+                iv: btoa(String.fromCharCode(...iv))
+            };
+        }
+
+        async function decryptMessage(data) {
+            const encryptedMessage = new Uint8Array(atob(data.encryptedMessage).split('').map(c => c.charCodeAt(0)));
+            const encryptedKey = new Uint8Array(atob(data.encryptedKey).split('').map(c => c.charCodeAt(0)));
+            const iv = new Uint8Array(atob(data.iv).split('').map(c => c.charCodeAt(0)));
+
+            const aesKey = await crypto.subtle.decrypt(
+                { name: 'RSA-OAEP' },
+                privateKey,
+                encryptedKey
+            );
+
+            const importedAesKey = await crypto.subtle.importKey(
+                'raw',
+                aesKey,
+                { name: 'AES-GCM' },
+                false,
+                ['decrypt']
+            );
+
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-GCM', iv },
+                importedAesKey,
+                encryptedMessage
+            );
+
+            return new TextDecoder().decode(decrypted);
+        }
+
+        async function encryptSymmetricKey(symmetricKey, recipient) {
+            const recipientPublicKey = publicKeys[recipient];
+            if (!recipientPublicKey) throw new Error(`Public key for ${recipient} not found`);
+
+            const key = await crypto.subtle.importKey(
+                'spki',
+                pemToArrayBuffer(recipientPublicKey),
+                { name: 'RSA-OAEP', hash: 'SHA-256' },
+                false,
+                ['encrypt']
+            );
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'RSA-OAEP' },
+                key,
+                symmetricKey
+            );
+            return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+        }
+
+        async function encryptFile(fileData, symmetricKey, iv) {
+            const key = await crypto.subtle.importKey(
+                'raw',
+                symmetricKey,
+                { name: 'AES-CBC' },
+                false,
+                ['encrypt']
+            );
+            const data = new TextEncoder().encode(fileData);
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-CBC', iv },
+                key,
+                data
+            );
+            return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+        }
+
+        async function decryptFile(fileData, encryptedKey, iv) {
+            const encryptedFileData = new Uint8Array(atob(fileData).split('').map(c => c.charCodeAt(0)));
+            const encryptedSymmetricKey = new Uint8Array(atob(encryptedKey).split('').map(c => c.charCodeAt(0)));
+            const ivArray = new Uint8Array(atob(iv).split('').map(c => c.charCodeAt(0)));
+
+            // Decrypt the symmetric key with the user's private key
+            const symmetricKey = await crypto.subtle.decrypt(
+                { name: 'RSA-OAEP' },
+                privateKey,
+                encryptedSymmetricKey
+            );
+
+            // Import the symmetric key for AES-CBC decryption
+            const importedSymmetricKey = await crypto.subtle.importKey(
+                'raw',
+                symmetricKey,
+                { name: 'AES-CBC' },
+                false,
+                ['decrypt']
+            );
+
+            // Decrypt the file data
+            const decrypted = await crypto.subtle.decrypt(
+                { name: 'AES-CBC', iv: ivArray },
+                importedSymmetricKey,
+                encryptedFileData
+            );
+
+            return new TextDecoder().decode(decrypted);
+        }
+
+        function toggleEmojiPicker() {
+            const picker = document.getElementById('emoji-picker');
+            picker.style.display = picker.style.display === 'block' ? 'none' : 'block';
+            if (picker.style.display === 'block') {
+                const emojiButton = document.querySelector('button[onclick="toggleEmojiPicker()"]');
+                const rect = emojiButton.getBoundingClientRect();
+                picker.style.left = rect.left + 'px';
+                picker.style.top = (rect.top - picker.offsetHeight) + 'px';
+            }
+        }
+
+        function insertEmoji(emoji) {
+            const messageInput = document.getElementById('message-input');
+            messageInput.value += emoji;
+            messageInput.focus();
+            toggleEmojiPicker();
+        }
+
+        document.addEventListener('click', (event) => {
+            const picker = document.getElementById('emoji-picker');
+            const emojiButton = document.querySelector('button[onclick="toggleEmojiPicker()"]');
+            if (!picker.contains(event.target) && !emojiButton.contains(event.target)) {
+                picker.style.display = 'none';
+            }
+        });
+
+        document.getElementById('message-input').addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
